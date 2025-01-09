@@ -7,11 +7,11 @@
 #ifndef BITCOIN_PRIMITIVES_BLOCK_H
 #define BITCOIN_PRIMITIVES_BLOCK_H
 
-#include "auxpow.h"
-#include "primitives/transaction.h"
-#include "primitives/pureheader.h"
-#include "serialize.h"
-#include "uint256.h"
+#include "../auxpow.h"
+#include "../primitives/transaction.h"
+#include "../primitives/pureheader.h"
+#include "../serialize.h"
+#include "../uint256.h"
 
 /** Nodes collect new transactions into a block, hash them into a hash tree,
  * and scan through nonce values to make the block's hash satisfy proof-of-work
