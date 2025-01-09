@@ -636,18 +636,27 @@ void BlockAssembler::addPriorityTxs()
 
 void IncrementExtraNonce(CBlock* pblock, const CBlockIndex* pindexPrev, unsigned int& nExtraNonce)
 {
-    // Update nExtraNonce
+    // Update nExtraNonce with 4-byte minimum size
     static uint256 hashPrevBlock;
     if (hashPrevBlock != pblock->hashPrevBlock)
     {
-        nExtraNonce = 0;
+        nExtraNonce = 0x10000000; // Initialize with 4-byte minimum value
         hashPrevBlock = pblock->hashPrevBlock;
     }
     ++nExtraNonce;
-    unsigned int nHeight = pindexPrev->nHeight+1; // Height first in coinbase required for block.version=2
+    
+    unsigned int nHeight = pindexPrev->nHeight+1;
     CMutableTransaction txCoinbase(*pblock->vtx[0]);
-    txCoinbase.vin[0].scriptSig = (CScript() << nHeight << CScriptNum(nExtraNonce)) + COINBASE_FLAGS;
-    assert(txCoinbase.vin[0].scriptSig.size() <= 100);
+    
+    // Ensure extranonce is always 4 bytes minimum
+    CScript extranonceScript;
+    extranonceScript << nHeight;
+    extranonceScript << CScriptNum(nExtraNonce & 0xFFFFFFFF); // Mask to ensure 4 bytes
+    extranonceScript += COINBASE_FLAGS;
+    
+    txCoinbase.vin[0].scriptSig = extranonceScript;
+    assert(txCoinbase.vin[0].scriptSig.size() >= 4); // Ensure minimum size
+    assert(txCoinbase.vin[0].scriptSig.size() <= 100); // Keep maximum limit
 
     pblock->vtx[0] = MakeTransactionRef(std::move(txCoinbase));
     pblock->hashMerkleRoot = BlockMerkleRoot(*pblock);

@@ -1,0 +1,6 @@
+# From the dogecoin source root directory
+cp genesis.cpp src/ 
+make clean
+./autogen.sh
+./configure
+make -j16 

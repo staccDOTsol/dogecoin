@@ -121,12 +121,19 @@ bool CheckProofOfWork(uint256 hash, unsigned int nBits, const Consensus::Params&
     bnTarget.SetCompact(nBits, &fNegative, &fOverflow);
 
     // Check range
-    if (fNegative || bnTarget == 0 || fOverflow || bnTarget > UintToArith256(params.powLimit))
+    if (fNegative || bnTarget == 0 || fOverflow || bnTarget > UintToArith256(params.powLimit)) {
+        LogPrintf("CheckProofOfWork(): target invalid (negative=%d, zero=%d, overflow=%d, exceeds limit=%d)\n",
+                  fNegative, bnTarget == 0, fOverflow, bnTarget > UintToArith256(params.powLimit));
         return false;
+    }
 
     // Check proof of work matches claimed amount
-    if (UintToArith256(hash) > bnTarget)
+    arith_uint256 bnHash = UintToArith256(hash);
+    if (bnHash > bnTarget) {
+        LogPrintf("CheckProofOfWork(): hash does not meet target\n");
+        LogPrintf("  hash:   %s\n  target: %s\n", bnHash.ToString(), bnTarget.ToString());
         return false;
+    }
 
     return true;
 }

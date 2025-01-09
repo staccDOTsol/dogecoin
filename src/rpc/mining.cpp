@@ -3,6 +3,23 @@
 // Copyright (c) 2021-2023 The Dogecoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
+#include <algorithm>
+#include <cassert>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <ctime>
+#include <iomanip>
+#include <iostream>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <set>
+#include <sstream>
+#include <string>
+#include <thread>
+#include <utility>
+#include <vector>
 
 #include "base58.h"
 #include "amount.h"
@@ -29,6 +46,10 @@
 #include <boost/assign/list_of.hpp>
 
 #include <univalue.h>
+
+#include <thread>
+#include <atomic>
+#include <vector>
 
 using namespace std;
 
@@ -96,10 +117,59 @@ UniValue getnetworkhashps(const JSONRPCRequest& request)
     return GetNetworkHashPS(request.params.size() > 0 ? request.params[0].get_int() : 120, request.params.size() > 1 ? request.params[1].get_int() : -1);
 }
 
+class ParallelMiner {
+private:
+    std::atomic<bool> found{false};
+    std::atomic<uint32_t> successfulNonce{0};
+    const int num_threads;
+
+    void MineRange(CBlock* pblock, uint32_t start, uint32_t end, const Consensus::Params& params) {
+        CBlock localBlock(*pblock); // Create local copy for this thread
+        localBlock.nNonce = start;
+        
+        while (!found && localBlock.nNonce < end) {
+            if (CheckProofOfWork(localBlock.GetPoWHash(), localBlock.nBits, params)) {
+                found = true;
+                successfulNonce = localBlock.nNonce;
+                break;
+            }
+            ++localBlock.nNonce;
+        }
+    }
+
+public:
+    ParallelMiner() : num_threads(std::thread::hardware_concurrency()) {}
+
+    bool MineBlock(CBlock* pblock, const Consensus::Params& params, uint64_t maxTries) {
+        found = false;
+        std::vector<std::thread> threads;
+        
+        // Calculate range for each thread
+        uint64_t range_per_thread = maxTries / num_threads;
+        
+        // Launch threads
+        for (int i = 0; i < num_threads; i++) {
+            uint64_t start = i * range_per_thread;
+            uint64_t end = (i == num_threads - 1) ? maxTries : (i + 1) * range_per_thread;
+            threads.emplace_back(&ParallelMiner::MineRange, this, pblock, start, end, std::ref(params));
+        }
+        
+        // Wait for all threads to complete
+        for (auto& thread : threads) {
+            thread.join();
+        }
+        
+        // If solution was found, update the block's nonce
+        if (found) {
+            pblock->nNonce = successfulNonce;
+        }
+        
+        return found;
+    }
+};
+
 UniValue generateBlocks(std::shared_ptr<CReserveScript> coinbaseScript, int nGenerate, uint64_t nMaxTries, bool keepScript, int nMineAuxPow)
 {
-    // Dogecoin: Never mine witness tx
-    const bool fMineWitnessTx = false;
     static const int nInnerLoopCount = 0x10000;
     int nHeightStart = 0;
     int nHeightEnd = 0;
@@ -111,44 +181,46 @@ UniValue generateBlocks(std::shared_ptr<CReserveScript> coinbaseScript, int nGen
         nHeight = nHeightStart;
         nHeightEnd = nHeightStart+nGenerate;
     }
+    
     unsigned int nExtraNonce = 0;
     UniValue blockHashes(UniValue::VARR);
-    while (nHeight < nHeightEnd)
+    ParallelMiner miner;
+
+    while (nHeight < nHeightEnd && nMaxTries > 0)
     {
-        std::unique_ptr<CBlockTemplate> pblocktemplate(BlockAssembler(Params()).CreateNewBlock(coinbaseScript->reserveScript, fMineWitnessTx));
+        std::unique_ptr<CBlockTemplate> pblocktemplate(BlockAssembler(Params()).CreateNewBlock(coinbaseScript->reserveScript, false));
         if (!pblocktemplate.get())
             throw JSONRPCError(RPC_INTERNAL_ERROR, "Couldn't create new block");
+            
         CBlock *pblock = &pblocktemplate->block;
         {
             LOCK(cs_main);
             IncrementExtraNonce(pblock, chainActive.Tip(), nExtraNonce);
         }
+
+        bool found = false;
         if (!nMineAuxPow) {
-            while (nMaxTries > 0 && pblock->nNonce < nInnerLoopCount && !CheckProofOfWork(pblock->GetPoWHash(), pblock->nBits, Params().GetConsensus(nHeight))) {
-                ++pblock->nNonce;
-                --nMaxTries;
-            }
+            // Regular mining
+            found = miner.MineBlock(pblock, Params().GetConsensus(nHeight), static_cast<uint32_t>(std::min(nMaxTries, static_cast<uint64_t>(nInnerLoopCount))));
+            nMaxTries -= std::min(nMaxTries, static_cast<uint64_t>(nInnerLoopCount));
         } else {
+            // AuxPow mining
             CAuxPow::initAuxPow(*pblock);
             CPureBlockHeader& miningHeader = pblock->auxpow->parentBlock;
-            while (nMaxTries > 0 && miningHeader.nNonce < nInnerLoopCount && !CheckProofOfWork(miningHeader.GetPoWHash(), pblock->nBits, Params().GetConsensus(nHeight))) {
-                ++miningHeader.nNonce;
-                --nMaxTries;
+            // Create temporary block for mining
+            CBlock miningBlock;
+            miningBlock.nBits = pblock->nBits;
+            found = miner.MineBlock(&miningBlock, Params().GetConsensus(nHeight), static_cast<uint32_t>(std::min(nMaxTries, static_cast<uint64_t>(nInnerLoopCount))));
+            if (found) {
+                miningHeader.nNonce = miningBlock.nNonce;
             }
+            nMaxTries -= std::min(nMaxTries, static_cast<uint64_t>(nInnerLoopCount));
         }
-        if (nMaxTries == 0) {
-            break;
+
+        if (!found) {
+            continue;
         }
-        if (!nMineAuxPow) {
-            if (pblock->nNonce == nInnerLoopCount) {
-                continue;
-            }
-        } else {
-            CPureBlockHeader& miningHeader = pblock->auxpow->parentBlock;
-            if (miningHeader.nNonce == nInnerLoopCount) {
-                continue;
-            }
-        }
+
         std::shared_ptr<const CBlock> shared_pblock = std::make_shared<const CBlock>(*pblock);
         if (!ProcessNewBlock(Params(), shared_pblock, true, NULL)) {
             if (nMineAuxPow) {
@@ -1171,7 +1243,7 @@ UniValue getauxblockbip22(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
 
     //throw an error if no script was provided
-    if (!coinbaseScript->reserveScript.size())
+    if (coinbaseScript->reserveScript.empty())
         throw JSONRPCError(RPC_INTERNAL_ERROR, "No coinbase script available (mining requires a wallet)");
 
     AuxMiningCheck();
