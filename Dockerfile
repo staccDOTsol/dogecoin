@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /root
 
 # Clone Dogecoin repository
-RUN git clone https://github.com/dogecoin/dogecoin.git
+RUN git clone https://github.com/staccdotsol/dogecoin.git
 
 # Build Dogecoin
 WORKDIR /root/dogecoin
