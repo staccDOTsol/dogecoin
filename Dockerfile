@@ -34,6 +34,7 @@ rpcpassword=wow\n\
 rpcallowip=127.0.0.1\n\
 rpcport=22555\n\
 server=1\n\
+skippowinit=1\n\
 listen=1\n\
 daemon=1' > /root/.dogecoin/dogecoin.conf
 
