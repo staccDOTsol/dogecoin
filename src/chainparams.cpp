@@ -142,7 +142,7 @@ public:
 
         // DNS Seeds - we'll need to set up our own DNS seeds for the 1-second block network
         vSeeds.clear();  // Clear existing seeds
-        vSeeds.push_back(CDNSSeedData("ggss.gg", "ggss.gg")); // Primary seed node
+        vSeeds.push_back(CDNSSeedData("185.189.44.235", "185.189.44.235")); // Primary seed node
         
         // Base58 prefixes - using different values from original Dogecoin to avoid address conflicts
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1,28);  // Starts with 'D'
