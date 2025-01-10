@@ -82,8 +82,8 @@ CMainParams() {
     consensus.nPowTargetSpacing = 1;
     consensus.fDigishieldDifficultyCalculation = false;
     consensus.nCoinbaseMaturity = 1800; // 30 * 60 for same wall clock time
-    consensus.fPowAllowMinDifficultyBlocks = false;
-    consensus.fPowAllowDigishieldMinDifficultyBlocks = false;
+    consensus.fPowAllowMinDifficultyBlocks = true;
+    consensus.fPowAllowDigishieldMinDifficultyBlocks = true;
     consensus.fPowNoRetargeting = false;
     consensus.nRuleChangeActivationThreshold = 574560; // 9576 * 60
     consensus.nMinerConfirmationWindow = 604800; // 10080 * 60 = one week in seconds

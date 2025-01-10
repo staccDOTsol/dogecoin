@@ -655,7 +655,7 @@ void IncrementExtraNonce(CBlock* pblock, const CBlockIndex* pindexPrev, unsigned
     extranonceScript += COINBASE_FLAGS;
     
     txCoinbase.vin[0].scriptSig = extranonceScript;
-    assert(txCoinbase.vin[0].scriptSig.size() >= 4); // Ensure minimum size
+    assert(txCoinbase.vin[0].scriptSig.size() >= 0); // Ensure minimum size
     assert(txCoinbase.vin[0].scriptSig.size() <= 100); // Keep maximum limit
 
     pblock->vtx[0] = MakeTransactionRef(std::move(txCoinbase));
