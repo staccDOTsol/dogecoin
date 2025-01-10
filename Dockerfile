@@ -54,7 +54,6 @@ if [ -z "${EGOD_ADDRESS}" ]; then\n\
 fi\n\
 echo "Mining to address: ${EGOD_ADDRESS}"\n\
 sleep 30\n\
-
 ./src/dogecoin-cli generatetoaddress 1000000 ${EGOD_ADDRESS} &\n\
 tail -f /root/.dogecoin/debug.log' > /root/start.sh && \
     chmod +x /root/start.sh
