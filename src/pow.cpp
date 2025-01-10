@@ -12,6 +12,7 @@
 #include "primitives/block.h"
 #include "uint256.h"
 #include "util.h"
+#include "validation.h"
 
 // Determine if the for the given block, a min difficulty setting applies
 bool AllowMinDifficultyForBlock(const CBlockIndex* pindexLast, const CBlockHeader *pblock, const Consensus::Params& params)
@@ -114,6 +115,11 @@ unsigned int CalculateNextWorkRequired(const CBlockIndex* pindexLast, int64_t nF
 
 bool CheckProofOfWork(uint256 hash, unsigned int nBits, const Consensus::Params& params)
 {
+    // Add skip parameter check
+    if (GetBoolArg("-skippowinit", false) && IsInitialBlockDownload()) {
+        return true;
+    }
+
     bool fNegative;
     bool fOverflow;
     arith_uint256 bnTarget;

@@ -1,16 +1,4 @@
-#define HAVE_ENDIAN_H 1
-#define HAVE_DECL_HTOBE16 1
-#define HAVE_DECL_HTOLE16 1
-#define HAVE_DECL_BE16TOH 1
-#define HAVE_DECL_LE16TOH 1
-#define HAVE_DECL_HTOBE32 1
-#define HAVE_DECL_HTOLE32 1
-#define HAVE_DECL_BE32TOH 1
-#define HAVE_DECL_LE32TOH 1
-#define HAVE_DECL_HTOBE64 1
-#define HAVE_DECL_HTOLE64 1
-#define HAVE_DECL_BE64TOH 1
-#define HAVE_DECL_LE64TOH 1
+#include <endian.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +17,8 @@
 #include "consensus/merkle.h"
 #include "util.h"
 #include "utilstrencodings.h"
+#include "hash.h"
+#include "serialize.h"
 
 std::mutex mtx;
 std::atomic<bool> found{false};
@@ -86,44 +76,77 @@ bool CheckProofOfWork(uint256 hash, unsigned int nBits, const Consensus::Params&
 
     return true;
 }
+double GetDifficulty(uint32_t nBits)
+{
+    int nShift = (nBits >> 24) & 0xff;
+    double dDiff =
+        (double)0x0000ffff / (double)(nBits & 0x00ffffff);
+
+    while (nShift < 29)
+    {
+        dDiff *= 256.0;
+        nShift++;
+    }
+    while (nShift > 29)
+    {
+        dDiff /= 256.0;
+        nShift--;
+    }
+
+    return dDiff;
+}
+// Atomic variable to store solution nonce when found
+static std::atomic<uint32_t> solution_nonce{0};
+
+// Helper function to serialize block data for hashing
+uint256 SerializeHash(const CBlock& block) {
+    CHashWriter ss(SER_GETHASH, PROTOCOL_VERSION);
+    ss << block.nVersion;
+    ss << block.hashPrevBlock;
+    ss << block.hashMerkleRoot;
+    ss << block.nTime;
+    ss << block.nBits;
+    ss << block.nNonce;
+    return ss.GetHash();
+}
 
 void mine_range(CBlock genesis, uint32_t start, uint32_t end, const arith_uint256& hashTarget, const Consensus::Params& params) {
+    // Pre-calculate unchanging parts
+    const uint256 constant_hash = SerializeHash(genesis);
     uint32_t counter = 0;
     genesis.nNonce = start;
     
-    while (!found && genesis.nNonce < end) {
-        uint256 hash = genesis.GetPoWHash();
-        
-        // Simplified check - we don't need full CheckProofOfWork for every attempt
-        if (UintToArith256(hash) <= hashTarget) {
-            std::lock_guard<std::mutex> lock(mtx);
-            if (!found) {
-                found = true;
-                result = genesis;
-                printf("\nBlock found!\n");
-                printf("Nonce: %u\n", genesis.nNonce);
-                printf("Hash: %s\n", hash.ToString().c_str());
-                return;
-            }
+    // Use larger batches for better performance
+    const uint32_t BATCH_SIZE = 10000;
+    std::vector<uint256> hashes(BATCH_SIZE);
+    
+    while (genesis.nNonce < end && !found.load(std::memory_order_relaxed)) {
+        // Process in batches
+        for (uint32_t i = 0; i < BATCH_SIZE && genesis.nNonce < end; i++) {
+            hashes[i] = genesis.GetHash();
+            genesis.nNonce++;
+            counter++;
         }
         
-        ++genesis.nNonce;
-        
-        if (++counter % 500000 == 0) {  // Print less frequently to reduce overhead
-            std::lock_guard<std::mutex> lock(mtx);
-            printf("\rNonce: %u (%.2f%%) - Hash: %s", 
-                   genesis.nNonce,
-                   (float)(genesis.nNonce - start) / (end - start) * 100.0,
-                   hash.ToString().c_str());
-            fflush(stdout);
+        // Check hashes in batch
+        for (uint32_t i = 0; i < BATCH_SIZE; i++) {
+            if (UintToArith256(hashes[i]) <= hashTarget) {
+                // Lock mutex before modifying shared state
+                std::lock_guard<std::mutex> lock(mtx);
+                found.store(true, std::memory_order_relaxed);
+                genesis.nNonce -= (BATCH_SIZE - i);  // Correct nonce
+                result = genesis;  // Save the winning block
+                break;
+            }
         }
     }
 }
 
+
 int main() {
     // Configuration
     uint32_t nTime = time(nullptr);
-    uint32_t nBits = 0x1e0ffff0;  // Original Dogecoin difficulty, easier than 0x1b0ffff0
+    uint32_t nBits = 0x1b00ffff;  // Changed from 0x1e0ffff0 to get ~100k difficulty
     const char* pszTimestamp = "Much Currency Such Coin - 2024 - 1 Second Blocks";
     
     printf("Creating genesis block...\n");
@@ -133,10 +156,10 @@ int main() {
 
     // Initialize consensus parameters
     Consensus::Params params;
-    params.powLimit = uint256S("00000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+    params.powLimit = uint256S("00000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
     params.nPowTargetTimespan = 240;  // 4 minutes
     params.nPowTargetSpacing = 1;     // 1 second blocks
-    params.fPowAllowMinDifficultyBlocks = false;
+    params.fPowAllowMinDifficultyBlocks = true;
     params.fPowNoRetargeting = false;
     params.nSubsidyHalvingInterval = 6000000;
     params.nAuxpowChainId = 0x0062;
@@ -161,10 +184,13 @@ int main() {
 
     // Start mining threads
     std::vector<std::thread> threads;
-    const int num_threads = std::thread::hardware_concurrency();
+    const int num_threads = std::max(1, static_cast<int>(std::thread::hardware_concurrency()) - 1);
     const uint32_t range_per_thread = UINT32_MAX / num_threads;
     
     printf("Starting mining with %d threads...\n", num_threads);
+    printf("Hardware concurrency: %d\n", std::thread::hardware_concurrency());
+    printf("Range per thread: 0x%08x\n", range_per_thread);
+    printf("Difficulty: %.8f\n", GetDifficulty(nBits));
     time_t start_time = time(nullptr);
 
     for (int i = 0; i < num_threads; i++) {
@@ -189,18 +215,6 @@ int main() {
         printf("PoW hash: %s\n", result.GetPoWHash().ToString().c_str());
         printf("Merkle root: %s\n", result.hashMerkleRoot.ToString().c_str());
         printf("Mining time: %.1f seconds\n", elapsed);
-
-        // Calculate and display actual difficulty
-        arith_uint256 bnTarget;
-        bool fNegative;
-        bool fOverflow;
-        bnTarget.SetCompact(result.nBits, &fNegative, &fOverflow);
-        
-        // The difficulty should be calculated as:
-        // difficulty = (2^256-1) / current_target
-        arith_uint256 maxValue = UintToArith256(uint256S("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"));
-        double difficulty = (maxValue / bnTarget).getdouble();
-        printf("Actual difficulty: %.1f\n", difficulty);
         
         // Output for chainparams.cpp
         printf("\nAdd to chainparams.cpp:\n");
@@ -208,6 +222,7 @@ int main() {
                result.nTime, result.nNonce, result.nBits, 5280);
         printf("consensus.hashGenesisBlock = uint256S(\"%s\");\n", 
                result.GetHash().ToString().c_str());
+        printf("Difficulty: %.8f\n", GetDifficulty(result.nBits));
         
         return 0;
     }
