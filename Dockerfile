@@ -51,10 +51,16 @@ RUN echo '#!/bin/bash\n\
 sleep 10\n\
 if [ -z "${EGOD_ADDRESS}" ]; then\n\
   export EGOD_ADDRESS=$(./src/dogecoin-cli getnewaddress)\n\
+  echo "Generated address: ${EGOD_ADDRESS}"\n\
+  echo "Private key:"\n\
+  ./src/dogecoin-cli dumpprivkey ${EGOD_ADDRESS}\n\
+  sleep 60 \n\
 fi\n\
 echo "Mining to address: ${EGOD_ADDRESS}"\n\
-sleep 30\n\
-./src/dogecoin-cli generatetoaddress 1000000 ${EGOD_ADDRESS} &\n\
+while true; do\n\
+  ./src/dogecoin-cli generatetoaddress 100 ${EGOD_ADDRESS}\n\
+  echo "Mined 100 blocks. Continuing..."\n\
+done &\n\
 tail -f /root/.dogecoin/debug.log' > /root/start.sh && \
     chmod +x /root/start.sh
 
